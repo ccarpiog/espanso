@@ -41,3 +41,6 @@ pub mod search;
 pub mod stats;
 pub mod suppress;
 pub mod undo;
+
+#[cfg(test)]
+mod form_recovery_tests;

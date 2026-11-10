@@ -101,6 +101,11 @@ impl<State> Middleware for MatcherMiddleware<'_, State> {
     }
 
     fn next(&self, event: Event, _: &mut dyn FnMut(Event)) -> Event {
+        if matches!(event.etype, EventType::FormInteractionEnded(_)) {
+            self.matcher_states.borrow_mut().clear();
+            return event;
+        }
+
         if is_event_of_interest(&event.etype) {
             let mut matcher_states = self.matcher_states.borrow_mut();
             let prev_states = if matcher_states.is_empty() {

@@ -74,6 +74,7 @@ pub enum EventType {
     ImageResolved(internal::ImageResolvedEvent),
     MatchInjected,
     DiscardPrevious(internal::DiscardPreviousEvent),
+    FormInteractionEnded(internal::FormInteractionEndedEvent),
     DiscardBetween(internal::DiscardBetweenEvent),
     Undo(internal::UndoEvent),
     RenderingError,

@@ -52,7 +52,9 @@ impl Middleware for UndoMiddleware<'_> {
     fn next(&self, event: Event, _: &mut dyn FnMut(Event)) -> Event {
         let mut record = self.record.borrow_mut();
 
-        if let EventType::TriggerCompensation(m_event) = &event.etype {
+        if matches!(event.etype, EventType::FormInteractionEnded(_)) {
+            *record = None;
+        } else if let EventType::TriggerCompensation(m_event) = &event.etype {
             *record = Some(InjectionRecord {
                 id: Some(event.source_id),
                 trigger: Some(m_event.trigger.clone()),

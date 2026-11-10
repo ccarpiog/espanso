@@ -86,6 +86,14 @@ pub struct DiscardPreviousEvent {
     pub minimum_source_id: u32,
 }
 
+/// End a form interaction without claiming that an expansion was injected.
+/// Events recorded while the form was open must not reach the matcher, and
+/// matcher/undo state from before the interaction is no longer valid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormInteractionEndedEvent {
+    pub minimum_source_id: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscardBetweenEvent {
     // All Events with a source_id between start_id (included) and end_id (excluded)
