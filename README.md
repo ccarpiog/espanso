@@ -79,6 +79,8 @@ Escape, or closing the window. Opening the same form restores its entries;
 snippet, configuration context, and field IDs/types. Changing a dynamic label,
 default or choice list does not hide an existing draft; saved choices that are
 no longer offered are omitted, while text entries remain intact.
+If all previously selected choices disappear, the current default applies;
+an explicitly empty saved selection stays empty.
 
 **Copy result** is the default completion action. It renders the entire snippet
 and copies the result without deleting the trigger or sending any editing keys.

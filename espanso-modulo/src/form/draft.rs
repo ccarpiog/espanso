@@ -21,10 +21,13 @@ impl Draft {
             match &field.field_type {
                 FieldType::Row(row) => self.retain_available_choices(&row.fields),
                 FieldType::Choice(choice) => {
-                    let Some(values) = field.id.as_ref().and_then(|id| self.fields.get_mut(id))
-                    else {
+                    let Some(id) = field.id.as_ref() else {
                         continue;
                     };
+                    let Some(values) = self.fields.get_mut(id) else {
+                        continue;
+                    };
+                    let had_selection = !values.is_empty();
                     let mut available = HashMap::<&str, usize>::new();
                     for value in &choice.values {
                         *available.entry(value.as_str()).or_default() += 1;
@@ -40,6 +43,11 @@ impl Draft {
                     });
                     if matches!(choice.choice_type, ChoiceType::Dropdown) {
                         values.truncate(1);
+                    }
+                    // An obsolete selection should use the current default.
+                    // An intentionally empty saved selection must stay empty.
+                    if had_selection && values.is_empty() {
+                        self.fields.remove(id);
                     }
                 }
                 _ => {}
@@ -110,6 +118,31 @@ pub fn save(path: &Path, draft: &Draft) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn obsolete_choices_use_defaults_but_explicit_empty_selections_survive() {
+        let config = serde_json::from_value(serde_json::json!({
+            "layout": "[[branch]] [[removed_items]] [[empty_items]]",
+            "fields": {
+                "branch": {"type": "choice", "values": ["main", "dev"], "default": "main"},
+                "removed_items": {"type": "list", "values": ["new"]},
+                "empty_items": {"type": "list", "values": ["new"]}
+            }
+        }))
+        .unwrap();
+        let form = crate::form::generator::generate(config);
+        let mut draft = Draft {
+            fields: HashMap::from([
+                ("branch".into(), vec!["old".into()]),
+                ("removed_items".into(), vec!["old".into()]),
+                ("empty_items".into(), vec![]),
+            ]),
+        };
+        draft.retain_available_choices(&form.fields);
+        assert!(!draft.fields.contains_key("branch"));
+        assert!(!draft.fields.contains_key("removed_items"));
+        assert!(draft.fields["empty_items"].is_empty());
+    }
 
     #[test]
     fn dynamic_options_drop_only_unavailable_selections() {
