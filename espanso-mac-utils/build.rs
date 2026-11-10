@@ -25,16 +25,20 @@ fn cc_config() {
 #[cfg(target_os = "macos")]
 fn cc_config() {
     println!("cargo:rerun-if-changed=src/native.mm");
+    println!("cargo:rerun-if-changed=src/focus.mm");
     println!("cargo:rerun-if-changed=src/native.h");
     cc::Build::new()
         .cpp(true)
         .include("src/native.h")
         .file("src/native.mm")
+        .file("src/focus.mm")
+        .flag_if_supported("-std=c++11")
         .compile("espansomacutils");
     println!("cargo:rustc-link-lib=dylib=c++");
     println!("cargo:rustc-link-lib=static=espansomacutils");
     println!("cargo:rustc-link-lib=framework=Cocoa");
     println!("cargo:rustc-link-lib=framework=Carbon");
+    println!("cargo:rustc-link-lib=framework=ApplicationServices");
 }
 
 fn main() {

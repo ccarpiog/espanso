@@ -21,6 +21,7 @@
 #define ESPANSO_MAC_UTILS_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 // If a process is currently holding `SecureInput`, then return 1 and set the
 // pid pointer to the corresponding PID.
@@ -48,5 +49,16 @@ extern "C" void mac_utils_transition_to_background_app();
 // Start and stop a "headless" eventloop to receive NSApplication events.
 extern "C" void mac_utils_start_headless_eventloop();
 extern "C" void mac_utils_exit_headless_eventloop();
+
+// An opaque, owned snapshot of an app/window/text-field destination. Null
+// denotes an unavailable target; all queries fail closed for null handles.
+extern "C" void *mac_utils_focus_capture();
+extern "C" void mac_utils_focus_destroy(void *target);
+extern "C" int32_t mac_utils_focus_restore(const void *target);
+extern "C" int32_t mac_utils_focus_is_current(const void *target);
+extern "C" int32_t mac_utils_focus_is_unchanged_current(const void *target);
+extern "C" const char *mac_utils_focus_app_name(const void *target);
+extern "C" int32_t mac_utils_focus_paste(const void *target, const uint8_t *expected_deletion,
+                                        size_t deletion_size, size_t cursor_moves, uint32_t delay_ms);
 
 #endif // ESPANSO_MAC_UTILS_H
