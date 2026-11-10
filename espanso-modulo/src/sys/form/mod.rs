@@ -383,7 +383,7 @@ pub struct FormResult {
 }
 
 pub fn show(form: types::Form) -> HashMap<String, String> {
-    let result = show_inner(form, None, false);
+    let result = show_inner(form, None, false, false);
     if result.action == FormAction::Cancel {
         HashMap::new()
     } else {
@@ -391,14 +391,19 @@ pub fn show(form: types::Form) -> HashMap<String, String> {
     }
 }
 
-pub fn show_recoverable(form: types::Form, draft_path: Option<&std::path::Path>) -> FormResult {
-    show_inner(form, draft_path, true)
+pub fn show_recoverable(
+    form: types::Form,
+    draft_path: Option<&std::path::Path>,
+    supports_insert: bool,
+) -> FormResult {
+    show_inner(form, draft_path, true, supports_insert)
 }
 
 fn show_inner(
     form: types::Form,
     draft_path: Option<&std::path::Path>,
     recovery_mode: bool,
+    supports_insert: bool,
 ) -> FormResult {
     use super::interop::{
         interop_show_form, FormMetadata, FormRecoveryMetadata, Interoperable, ValuePair,
@@ -406,9 +411,7 @@ fn show_inner(
     use crate::form::draft::{self, Draft};
     use std::{ffi::CString, os::raw::c_void, path::Path};
 
-    let owned_form: interop::OwnedForm = form.into();
-    let metadata: *const FormMetadata = owned_form.as_ptr() as *const FormMetadata;
-    let (saved, error) = if recovery_mode {
+    let (mut saved, error) = if recovery_mode {
         match draft_path.map(draft::load).transpose() {
             Ok(saved) => (saved.flatten(), String::new()),
             Err(error) => (None, format!("Could not load saved entries: {error}")),
@@ -416,6 +419,11 @@ fn show_inner(
     } else {
         (None, String::new())
     };
+    if let Some(saved) = &mut saved {
+        saved.retain_available_choices(&form.fields);
+    }
+    let owned_form: interop::OwnedForm = form.into();
+    let metadata: *const FormMetadata = owned_form.as_ptr() as *const FormMetadata;
     let error = CString::new(error.replace('\0', "")).unwrap();
     let saved_strings: Vec<(CString, Option<CString>)> = saved
         .as_ref()
@@ -450,6 +458,7 @@ fn show_inner(
         .collect();
     let recovery = FormRecoveryMetadata {
         enabled: i32::from(recovery_mode),
+        supportsInsert: i32::from(supports_insert),
         hasDraft: i32::from(saved.is_some()),
         savedValues: saved_values.as_ptr(),
         savedValueSize: saved_values.len() as c_int,

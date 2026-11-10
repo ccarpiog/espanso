@@ -23,9 +23,28 @@ use espanso_ui::UIRemote;
 use std::time::Duration;
 use unicode_segmentation::UnicodeSegmentation;
 
+pub trait FormDestination {
+    fn restore(&self) -> bool;
+    fn capture_clipboard(&self, expected: &SavedResult) -> bool;
+    fn paste(&self, deletion: &str, cursor_moves: usize, delay_ms: u32) -> bool;
+}
+
+impl FormDestination for FormRecovery {
+    fn restore(&self) -> bool {
+        self.restore_target()
+    }
+    fn capture_clipboard(&self, expected: &SavedResult) -> bool {
+        self.capture_clipboard(expected)
+    }
+    fn paste(&self, deletion: &str, cursor_moves: usize, delay_ms: u32) -> bool {
+        self.paste_from_clipboard(deletion, cursor_moves, delay_ms)
+    }
+}
+
 pub struct RecoveryProcessor<'a> {
     pub inner: &'a mut dyn Processor,
     pub recovery: &'a FormRecovery,
+    pub destination: &'a dyn FormDestination,
     pub clipboard: &'a dyn Clipboard,
     pub params: &'a dyn ClipboardParamsProvider,
     pub sequence: &'a dyn EventSequenceProvider,
@@ -101,24 +120,22 @@ impl RecoveryProcessor<'_> {
             return;
         }
         let params = self.params.get();
+        let Some(deletion) =
+            deletion_count(events).and_then(|count| self.recovery.expected_deletion(count))
+        else {
+            self.ui.show_notification("Could not verify which trigger to replace. Use 'Copy last form result' and paste manually.");
+            return;
+        };
         let standard_paste = params.paste_shortcut.as_deref().is_none_or(|shortcut| {
             matches!(shortcut.to_ascii_uppercase().as_str(), "CMD+V" | "META+V")
         });
-        if !standard_paste || !self.recovery.restore_target() {
+        if !standard_paste || !self.destination.restore() {
             self.ui.show_notification(
                 "Could not safely restore the destination. Result copied; paste it manually.",
             );
             return;
         }
-        // The ONLY queued key events allowed here are the original trigger's
-        // backspaces. No queued effect is sent to the normal dispatcher.
-        let Some(backspaces) = deletion_count(events) else {
-            self.ui.show_notification(
-                "Result copied. Paste manually to avoid editing the wrong text.",
-            );
-            return;
-        };
-        if !self.recovery.capture_clipboard(&completed.result) {
+        if !self.destination.capture_clipboard(&completed.result) {
             self.ui.show_notification(
                 "The clipboard changed. Use 'Copy last form result' and paste manually.",
             );
@@ -127,8 +144,8 @@ impl RecoveryProcessor<'_> {
         std::thread::sleep(Duration::from_millis(params.pre_paste_delay as u64));
         // Native delivery checks the destination again after this delay and before
         // every key, synchronously. It never queues an unguarded global paste.
-        if !self.recovery.paste_from_clipboard(
-            backspaces,
+        if !self.destination.paste(
+            &deletion,
             completed.cursor_moves,
             params.paste_shortcut_event_delay.min(1000) as u32,
         ) {

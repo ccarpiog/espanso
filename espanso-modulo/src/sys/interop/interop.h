@@ -76,6 +76,7 @@ typedef struct ValuePair {
 
 typedef struct FormRecoveryMetadata {
     const int enabled;
+    const int supportsInsert;
     const int hasDraft;
     const ValuePair *savedValues;
     const int savedValueSize;

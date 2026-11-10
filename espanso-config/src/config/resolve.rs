@@ -294,7 +294,8 @@ impl Config for ResolvedConfig {
         match self.parsed.form_reopen_shortcut.as_deref() {
             Some(shortcut) if shortcut.eq_ignore_ascii_case("off") => None,
             Some(shortcut) => Some(shortcut.to_owned()),
-            None => Some("CTRL+ALT+SHIFT+R".to_owned()),
+            None if cfg!(target_os = "macos") => Some("CTRL+ALT+SHIFT+R".to_owned()),
+            None => None,
         }
     }
 
@@ -550,8 +551,13 @@ mod tests {
     fn form_reopen_shortcut_defaults_customizes_and_disables() {
         use_test_directory(|_, _, config_dir| {
             let path = config_dir.join("default.yml");
+            let platform_default = if cfg!(target_os = "macos") {
+                Some("CTRL+ALT+SHIFT+R")
+            } else {
+                None
+            };
             for (yaml, expected) in [
-                ("", Some("CTRL+ALT+SHIFT+R")),
+                ("", platform_default),
                 ("form_reopen_shortcut: CTRL+SHIFT+F", Some("CTRL+SHIFT+F")),
                 ("form_reopen_shortcut: off", None),
                 ("form_reopen_shortcut: OFF", None),

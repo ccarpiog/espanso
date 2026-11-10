@@ -46,8 +46,10 @@ pub struct CompletedForm {
 
 #[derive(Default)]
 struct Session {
-    #[cfg(any(target_os = "macos", test))]
+    #[cfg(target_os = "macos")]
     capture_attempted: bool,
+    deletion: Option<String>,
+    invalid_deletion: bool,
     used: bool,
     copy_requested: bool,
     cancelled: bool,
@@ -88,7 +90,10 @@ impl FormRecovery {
     pub(crate) fn prevent_target_capture_for_test(&self) {
         // Transaction tests exercise persistence and routing without inspecting
         // or changing the developer's real foreground application.
-        self.session.borrow_mut().capture_attempted = true;
+        #[cfg(target_os = "macos")]
+        {
+            self.session.borrow_mut().capture_attempted = true;
+        }
     }
 
     /// Called before either the search UI or the first form can take focus.
@@ -105,6 +110,32 @@ impl FormRecovery {
 
     pub fn prepare(&self, last: LastForm) {
         self.session.borrow_mut().current = Some(last);
+    }
+
+    /// Record the cause actually compensated by the engine, independently of
+    /// the selected form's trigger (which can be absent or from a prior run).
+    pub fn record_trigger(&self, trigger: &str, left_separator: Option<&str>) {
+        let mut session = self.session.borrow_mut();
+        if session.deletion.is_some() {
+            session.invalid_deletion = true;
+        }
+        let deletion = match left_separator {
+            Some(separator) => trigger.strip_prefix(separator),
+            None => Some(trigger),
+        };
+        match deletion {
+            Some(deletion) => session.deletion = Some(deletion.to_owned()),
+            None => session.invalid_deletion = true,
+        }
+    }
+
+    pub fn expected_deletion(&self, backspaces: usize) -> Option<String> {
+        let session = self.session.borrow();
+        let deletion = session.deletion.as_deref().unwrap_or("");
+        if session.invalid_deletion || deletion.chars().count() != backspaces {
+            return None;
+        }
+        Some(deletion.to_owned())
     }
     pub fn set_reopen_context(&self, key: String) {
         self.session.borrow_mut().reopen_context = Some(key);
@@ -202,35 +233,23 @@ impl FormRecovery {
 
     pub fn paste_from_clipboard(
         &self,
-        backspaces: usize,
+        expected_deletion: &str,
         cursor_moves: usize,
         delay_ms: u32,
     ) -> bool {
         #[cfg(target_os = "macos")]
         {
             let session = self.session.borrow();
-            let trigger = session
-                .current
-                .as_ref()
-                .and_then(|last| last.trigger.as_deref())
-                .unwrap_or("");
-            if backspaces > trigger.chars().count() {
-                return false;
-            }
-            let deletion: String = trigger
-                .chars()
-                .skip(trigger.chars().count() - backspaces)
-                .collect();
             let Some(snapshot) = &session.clipboard_snapshot else {
                 return false;
             };
             session.target.as_ref().is_some_and(|target| {
-                target.paste_from_clipboard(&deletion, cursor_moves, delay_ms, snapshot)
+                target.paste_from_clipboard(expected_deletion, cursor_moves, delay_ms, snapshot)
             })
         }
         #[cfg(not(target_os = "macos"))]
         {
-            let _ = (backspaces, cursor_moves, delay_ms);
+            let _ = (expected_deletion, cursor_moves, delay_ms);
             false
         }
     }
@@ -290,6 +309,44 @@ pub fn fingerprint(m: &Match) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deletion_uses_current_search_trigger_instead_of_saved_form_trigger() {
+        let dir = tempfile::tempdir().unwrap();
+        let recovery = FormRecovery::new(dir.path());
+        recovery.record_trigger(" jkj", Some(" "));
+        recovery.prepare(LastForm {
+            fingerprint: "form".into(),
+            context_key: "context".into(),
+            trigger: Some(":old".into()),
+            args: HashMap::new(),
+        });
+        assert_eq!(recovery.expected_deletion(3).as_deref(), Some("jkj"));
+        assert!(recovery.expected_deletion(4).is_none());
+        recovery.reset();
+        assert_eq!(recovery.expected_deletion(0).as_deref(), Some(""));
+        assert!(recovery.expected_deletion(3).is_none());
+        recovery.record_trigger("jkj", Some("wrong"));
+        assert!(recovery.expected_deletion(0).is_none());
+    }
+
+    #[test]
+    fn failed_result_save_preserves_new_output_in_memory_and_disables_insertion() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("form-recovery"), "not a directory").unwrap();
+        let recovery = FormRecovery::new(dir.path());
+        let result = SavedResult {
+            text: "new result".into(),
+            html: None,
+        };
+        assert!(recovery.finish(result, 0).is_err());
+        assert!(recovery.persistence_failed());
+        let completed = recovery.take_completed().unwrap();
+        assert!(!completed.insert);
+        assert_eq!(completed.result.text, "new result");
+        recovery.reset();
+        assert_eq!(recovery.last_result().unwrap().text, "new result");
+    }
 
     #[test]
     fn copy_is_sticky_across_forms_and_results_survive_restart() {

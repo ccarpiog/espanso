@@ -251,6 +251,7 @@ impl Environment {
             inner: &mut inner,
             recovery: &self.recovery,
             clipboard: &self.clipboard,
+            destination: &self.recovery,
             params: &Params,
             sequence: &sequence,
             matches: &matches,

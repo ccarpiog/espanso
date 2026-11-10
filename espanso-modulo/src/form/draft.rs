@@ -11,6 +11,43 @@ pub struct Draft {
     pub fields: HashMap<String, Vec<String>>,
 }
 
+impl Draft {
+    /// Dynamic option lists can change between openings. Keep still-offered
+    /// selections, including their exact case and multiplicity, without
+    /// discarding unrelated text fields from the same saved draft.
+    pub(crate) fn retain_available_choices(&mut self, fields: &[crate::sys::form::types::Field]) {
+        use crate::sys::form::types::{ChoiceType, FieldType};
+        for field in fields {
+            match &field.field_type {
+                FieldType::Row(row) => self.retain_available_choices(&row.fields),
+                FieldType::Choice(choice) => {
+                    let Some(values) = field.id.as_ref().and_then(|id| self.fields.get_mut(id))
+                    else {
+                        continue;
+                    };
+                    let mut available = HashMap::<&str, usize>::new();
+                    for value in &choice.values {
+                        *available.entry(value.as_str()).or_default() += 1;
+                    }
+                    values.retain(|value| {
+                        if let Some(count) = available.get_mut(value.as_str()) {
+                            if *count > 0 {
+                                *count -= 1;
+                                return true;
+                            }
+                        }
+                        false
+                    });
+                    if matches!(choice.choice_type, ChoiceType::Dropdown) {
+                        values.truncate(1);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 const MAX_DRAFT_BYTES: u64 = 4 * 1024 * 1024;
 
 pub fn load(path: &Path) -> Result<Option<Draft>> {
@@ -73,6 +110,40 @@ pub fn save(path: &Path, draft: &Draft) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dynamic_options_drop_only_unavailable_selections() {
+        let config = serde_json::from_value(serde_json::json!({
+            "layout": "[[notes]]\nRegion [[region]] and items [[items]]",
+            "fields": {
+                "region": {"type": "choice", "values": ["us", "US"]},
+                "items": {"type": "list", "values": ["one, two", "shared", "shared", "new"]}
+            }
+        }))
+        .unwrap();
+        let form = crate::form::generator::generate(config);
+        let mut draft = Draft {
+            fields: HashMap::from([
+                ("notes".into(), vec!["keep my multiline\nnotes".into()]),
+                ("region".into(), vec!["US".into()]),
+                (
+                    "items".into(),
+                    vec![
+                        "removed".into(),
+                        "one, two".into(),
+                        "shared".into(),
+                        "shared".into(),
+                        "shared".into(),
+                        "SHARED".into(),
+                    ],
+                ),
+            ]),
+        };
+        draft.retain_available_choices(&form.fields);
+        assert_eq!(draft.fields["notes"], ["keep my multiline\nnotes"]);
+        assert_eq!(draft.fields["region"], ["US"]);
+        assert_eq!(draft.fields["items"], ["one, two", "shared", "shared"]);
+    }
 
     #[test]
     fn roundtrip_preserves_lists_empty_selections_and_unicode() {

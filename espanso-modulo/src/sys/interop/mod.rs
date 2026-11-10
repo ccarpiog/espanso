@@ -191,6 +191,7 @@ pub struct ErrorMetadata {
 #[derive(Debug, Copy, Clone)]
 pub struct FormRecoveryMetadata {
     pub enabled: c_int,
+    pub supportsInsert: c_int,
     pub hasDraft: c_int,
     pub savedValues: *const ValuePair,
     pub savedValueSize: c_int,

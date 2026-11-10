@@ -198,7 +198,12 @@ impl<'a> Renderer<'a> for RendererAdapter<'a> {
         }
         let (result, cursor_moves) =
             crate::cli::worker::engine::form_recovery::prepare_result(body, format);
-        self.recovery.finish(result, cursor_moves)?;
+        if let Err(error) = self.recovery.finish(result, cursor_moves) {
+            // The completed result is retained in memory even if persistence
+            // fails. RecoveryProcessor copies it and reports the save failure;
+            // emitting RenderingError here would add a contradictory message.
+            log::error!("could not persist form result: {error}");
+        }
         Ok(true)
     }
 
@@ -208,7 +213,6 @@ impl<'a> Renderer<'a> for RendererAdapter<'a> {
         trigger: Option<&str>,
         trigger_vars: HashMap<String, String>,
     ) -> anyhow::Result<String> {
-        self.recovery.capture_target();
         if let Some(Some(template)) = self.template_map.get(&match_id) {
             let (config, match_set) = if let Some(expected) = self.recovery.reopen_context() {
                 self.config_provider
@@ -279,6 +283,8 @@ impl<'a> Renderer<'a> for RendererAdapter<'a> {
                 template
             };
 
+            capture_if_interactive(template, context, || self.recovery.capture_target());
+
             match self.renderer.render(template, context, &options) {
                 espanso_render::RenderResult::Success(body) => Ok(body),
                 espanso_render::RenderResult::Aborted => Err(RendererError::Aborted.into()),
@@ -289,6 +295,12 @@ impl<'a> Renderer<'a> for RendererAdapter<'a> {
         } else {
             Err(RendererError::NotFound.into())
         }
+    }
+}
+
+fn capture_if_interactive(template: &Template, context: &Context, capture: impl FnOnce()) {
+    if espanso_render::may_open_ui(template, context) {
+        capture();
     }
 }
 
@@ -365,5 +377,155 @@ fn calculate_casing_style(
         }
     } else {
         CasingStyle::None
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::{capture_if_interactive, ConfigProvider, MatchProvider, RendererAdapter};
+    use crate::gui::recovery::{FormRecovery, LastForm};
+    use espanso_config::{
+        config::Config,
+        matches::{store::MatchSet, Match},
+    };
+    use espanso_engine::{event::internal::TextFormat, process::Renderer};
+    use espanso_render::{
+        Context, Extension, ExtensionOutput, ExtensionResult, Params, RenderOptions, RenderResult,
+        Scope, Template, Variable,
+    };
+    use std::{cell::Cell, collections::HashMap, sync::Arc};
+
+    #[test]
+    fn capture_is_skipped_for_ordinary_snippets_and_precedes_scripts_before_forms() {
+        let captures = Cell::new(0);
+        let form = Variable {
+            name: "form".into(),
+            var_type: "form".into(),
+            ..Variable::default()
+        };
+        let context = Context {
+            global_vars: vec![&form],
+            ..Context::default()
+        };
+        let date = Template {
+            body: "{{date}}".into(),
+            vars: vec![Variable {
+                name: "date".into(),
+                var_type: "date".into(),
+                ..Variable::default()
+            }],
+            ..Template::default()
+        };
+        let plain = Template {
+            body: "hello".into(),
+            ..Template::default()
+        };
+        for template in [&plain, &date] {
+            capture_if_interactive(template, &context, || captures.set(captures.get() + 1));
+        }
+        assert_eq!(captures.get(), 0);
+
+        struct CheckedExtension<'a> {
+            name: &'static str,
+            captures: &'a Cell<usize>,
+            calls: &'a Cell<usize>,
+        }
+        impl Extension for CheckedExtension<'_> {
+            fn name(&self) -> &str {
+                self.name
+            }
+            fn calculate(&self, _: &Context, _: &Scope, _: &Params) -> ExtensionResult {
+                assert_eq!(
+                    self.captures.get(),
+                    1,
+                    "capture must precede even the first shell extension"
+                );
+                self.calls.set(self.calls.get() + 1);
+                ExtensionResult::Success(ExtensionOutput::Single(self.name.into()))
+            }
+        }
+        let calls = Cell::new(0);
+        let shell = CheckedExtension {
+            name: "shell",
+            captures: &captures,
+            calls: &calls,
+        };
+        let form_extension = CheckedExtension {
+            name: "form",
+            captures: &captures,
+            calls: &calls,
+        };
+        let renderer = espanso_render::create(vec![&shell, &form_extension]);
+        let template = Template {
+            body: "{{form}}".into(),
+            vars: vec![
+                Variable {
+                    name: "script".into(),
+                    var_type: "shell".into(),
+                    ..Variable::default()
+                },
+                form.clone(),
+            ],
+            ..Template::default()
+        };
+        capture_if_interactive(&template, &context, || captures.set(captures.get() + 1));
+        assert!(matches!(
+            espanso_render::Renderer::render(
+                &renderer,
+                &template,
+                &context,
+                &RenderOptions::default()
+            ),
+            RenderResult::Success(_)
+        ));
+        assert_eq!(calls.get(), 2);
+    }
+
+    struct EmptyProviders;
+    impl<'a> MatchProvider<'a> for EmptyProviders {
+        fn matches(&self) -> Vec<&'a Match> {
+            Vec::new()
+        }
+        fn get(&self, _: i32) -> Option<&'a Match> {
+            None
+        }
+    }
+    impl ConfigProvider<'_> for EmptyProviders {
+        fn configs(&self) -> Vec<(Arc<dyn Config>, MatchSet<'_>)> {
+            Vec::new()
+        }
+        fn active(&self) -> (Arc<dyn Config>, MatchSet<'_>) {
+            panic!("no configuration needed for retention")
+        }
+    }
+
+    #[test]
+    fn failed_result_save_retains_completion_without_a_rendering_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let recovery = FormRecovery::new(directory.path());
+        recovery.prevent_target_capture_for_test();
+        recovery.prepare(LastForm {
+            fingerprint: "match".into(),
+            context_key: "context".into(),
+            trigger: Some(":form".into()),
+            args: HashMap::new(),
+        });
+        recovery.open_form("[[name]]").unwrap();
+        // A directory at the destination deterministically prevents atomic replacement.
+        std::fs::create_dir(directory.path().join("form-recovery/last-result.json")).unwrap();
+        let renderer = espanso_render::create(Vec::new());
+        let providers = EmptyProviders;
+        let adapter = RendererAdapter::new(&providers, &providers, &renderer, &recovery);
+
+        assert!(adapter
+            .retain_interactive_result("retained result", &TextFormat::Plain)
+            .unwrap());
+        assert!(recovery.persistence_failed());
+        assert_eq!(recovery.last_result().unwrap().text, "retained result");
+        let completed = recovery
+            .take_completed()
+            .expect("completion must reach the recovery processor");
+        assert_eq!(completed.result.text, "retained result");
+        assert!(!completed.insert);
     }
 }

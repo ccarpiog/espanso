@@ -60,19 +60,14 @@ impl FormUI for ModuloFormUI<'_> {
         fields: &HashMap<String, FormField>,
     ) -> anyhow::Result<Option<HashMap<String, String>>> {
         let fields = convert_fields_into_object(fields);
-        let mut schema_fields = fields.clone();
-        for field in schema_fields.values_mut() {
-            if let Some(field) = field.as_object_mut() {
-                field.remove("default");
-            }
-        }
-        let schema = serde_json::to_string(&(layout, &schema_fields))?;
+        let schema = recovery_schema(layout, &fields)?;
         let draft_path = self.recovery.open_form(&schema)?;
         let modulo_form_config = ModuloFormConfig {
             title: "espanso",
             layout,
             fields,
             recovery_mode: true,
+            supports_insert: cfg!(target_os = "macos"),
             draft_path,
             max_form_width: self.option_provider.get_max_form_width(),
             max_form_height: self.option_provider.get_max_form_height(),
@@ -109,12 +104,39 @@ impl FormUI for ModuloFormUI<'_> {
 #[derive(Debug, Serialize)]
 struct ModuloFormConfig<'a> {
     recovery_mode: bool,
+    supports_insert: bool,
     draft_path: std::path::PathBuf,
     title: &'a str,
     layout: &'a str,
     fields: Map<String, Value>,
     max_form_width: usize,
     max_form_height: usize,
+}
+
+/// Only the actual input identities and types define draft compatibility.
+/// Labels, defaults, options and separators can be supplied by dynamic vars;
+/// changing those must not make a saved draft unreachable. The outer match
+/// fingerprint already separates changes to the raw snippet configuration.
+#[cfg(feature = "modulo")]
+fn recovery_schema(layout: &str, fields: &Map<String, Value>) -> anyhow::Result<String> {
+    use espanso_modulo::form::parser::layout::{parse_layout, Token};
+    let mut schema = std::collections::BTreeMap::new();
+    for token in parse_layout(layout).into_iter().flatten() {
+        if let Token::Field(name) = token {
+            let field_type = fields
+                .get(&name)
+                .and_then(|field| field.get("type"))
+                .and_then(Value::as_str)
+                .unwrap_or("text");
+            schema.insert(name, field_type);
+        }
+    }
+    Ok(serde_json::to_string(&schema)?)
+}
+
+#[cfg(not(feature = "modulo"))]
+fn recovery_schema(_: &str, _: &Map<String, Value>) -> anyhow::Result<String> {
+    anyhow::bail!("this build does not include form support")
 }
 
 fn convert_fields_into_object(fields: &HashMap<String, FormField>) -> Map<String, Value> {
@@ -145,4 +167,52 @@ fn convert_fields_into_object(fields: &HashMap<String, FormField>) -> Map<String
         obj.insert(name.clone(), value);
     }
     obj
+}
+
+#[cfg(all(test, feature = "modulo"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dynamic_layout_defaults_and_choices_keep_the_same_draft() {
+        let yesterday = json!({
+            "choice": {"type": "choice", "values": ["old", "shared"], "default": "old"},
+            "items": {"type": "list", "values": ["one, two", "shared"], "separator": ", "}
+        });
+        let today = json!({
+            "choice": {"type": "choice", "values": ["shared", "new"], "default": "new"},
+            "items": {"type": "list", "values": ["shared", "third"], "separator": " | "}
+        });
+        let before = recovery_schema(
+            "2026-11-09: [[choice]]\n[[items]] [[implicit]]",
+            yesterday.as_object().unwrap(),
+        )
+        .unwrap();
+        let after = recovery_schema(
+            "2026-11-10: [[items]]\n[[choice]] [[implicit]]",
+            today.as_object().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(before, after);
+        assert!(before.contains("\"implicit\":\"text\""));
+    }
+
+    #[test]
+    fn changed_input_id_or_type_uses_a_different_draft() {
+        let fields = json!({"answer": {"type": "choice"}});
+        let text_fields = json!({"answer": {"type": "text"}});
+        let choice = recovery_schema("[[answer]]", fields.as_object().unwrap()).unwrap();
+        assert_ne!(
+            choice,
+            recovery_schema("[[answer]]", text_fields.as_object().unwrap()).unwrap()
+        );
+        assert_ne!(
+            choice,
+            recovery_schema("[[renamed]]", fields.as_object().unwrap()).unwrap()
+        );
+        assert_eq!(
+            choice,
+            recovery_schema("{{answer}}", fields.as_object().unwrap()).unwrap()
+        );
+    }
 }

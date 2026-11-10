@@ -76,29 +76,33 @@ matches:
 Forms save entries locally while you type and retain them after Copy, Insert,
 Escape, or closing the window. Opening the same form restores its entries;
 **Start fresh** resets them to the current defaults. Drafts are separated by
-snippet, configuration context, and form structure. Changing a dynamic default,
-such as a clipboard value, does not hide an existing draft.
+snippet, configuration context, and field IDs/types. Changing a dynamic label,
+default or choice list does not hide an existing draft; saved choices that are
+no longer offered are omitted, while text entries remain intact.
 
 **Copy result** is the default completion action. It renders the entire snippet
 and copies the result without deleting the trigger or sending any editing keys.
 Select the destination and paste it manually. The **Copy last form result**
 command in Espanso Search copies the saved output again without rerunning scripts
-or asking for fields. Explicit Copy retains the result regardless of the normal
-`preserve_clipboard` or `backend` settings.
+or asking for fields. Both Copy and Insert retain the result on the clipboard
+regardless of the normal `preserve_clipboard` or `backend` settings. Copy and
+Cancel leave any typed trigger in place, including a trigger used to open Search.
 
 **Insert** is available for supported macOS text controls. Espanso remembers the
 original app, window, field, text, and selection before opening its UI. It restores
 that destination, verifies the exact trigger, and replaces the selected trigger
 with a guarded paste. If the destination or clipboard cannot be verified, the
-result remains recoverable through **Copy last form result**. Other platforms,
-unsupported controls, and custom paste shortcuts use the manual-copy fallback.
+result remains recoverable through **Copy last form result**. Other platforms
+show Copy without an Insert button. Unsupported macOS controls and custom paste
+shortcuts use the manual-copy fallback.
 Insertion is best effort: submitted keyboard events cannot prove that an app
 accepted a paste. Espanso retains the result and does not automatically retry.
 Rich text is copied with a plain-text fallback; cursor hints are removed from
 copied text, and cursor repositioning on Insert is supported for plain text only.
 
-Use **Reopen last form** in Search or press **Ctrl+Alt+Shift+R** (Control+Option+
-Shift+R on macOS). The shortcut can be changed or disabled in `config/default.yml`:
+Use **Reopen last form** in Search or press **Control+Option+Shift+R** on macOS.
+Other platforms have no default shortcut, to avoid desktop and AltGr conflicts.
+The shortcut can be set, changed or disabled in `config/default.yml`:
 
 ```yaml
 form_reopen_shortcut: CTRL+ALT+SHIFT+R

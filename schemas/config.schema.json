@@ -92,9 +92,8 @@
       "type": "string"
     },
     "form_reopen_shortcut": {
-      "description": "Hotkey used to reopen the last form. Set to off to disable the shortcut.",
-      "type": "string",
-      "default": "CTRL+ALT+SHIFT+R"
+      "description": "Hotkey used to reopen the last form. Defaults to CTRL+ALT+SHIFT+R on macOS and off on other platforms. Set to off to disable the shortcut.",
+      "type": "string"
     },
     "search_trigger": {
       "description": "Trigger used to show the Search UI.",

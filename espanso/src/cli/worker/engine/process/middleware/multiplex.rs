@@ -41,16 +41,29 @@ pub enum MatchResult<'a> {
 pub struct MultiplexAdapter<'a> {
     provider: &'a dyn MatchProvider<'a>,
     context: &'a dyn Context,
+    recovery: &'a crate::gui::recovery::FormRecovery,
 }
 
 impl<'a> MultiplexAdapter<'a> {
-    pub fn new(provider: &'a dyn MatchProvider<'a>, context: &'a dyn Context) -> Self {
-        Self { provider, context }
+    pub fn new(
+        provider: &'a dyn MatchProvider<'a>,
+        context: &'a dyn Context,
+        recovery: &'a crate::gui::recovery::FormRecovery,
+    ) -> Self {
+        Self {
+            provider,
+            context,
+            recovery,
+        }
     }
 }
 
 impl Multiplexer for MultiplexAdapter<'_> {
     fn convert(&self, detected_match: DetectedMatch) -> Option<EventType> {
+        if let Some(trigger) = &detected_match.trigger {
+            self.recovery
+                .record_trigger(trigger, detected_match.left_separator.as_deref());
+        }
         match self.provider.get(detected_match.id)? {
             MatchResult::User(m) => match &m.effect {
                 MatchEffect::Text(effect) => {

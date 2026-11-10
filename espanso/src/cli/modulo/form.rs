@@ -51,10 +51,15 @@ pub fn form_main(matches: &ArgMatches, _icon_paths: &IconPaths) -> i32 {
         .map(|path| path.to_string_lossy().to_string());
 
     let recovery_mode = config.recovery_mode;
+    let supports_insert = config.supports_insert;
     let draft_path = config.draft_path.clone();
     let form = generator::generate(config);
     let output = if recovery_mode {
-        serde_json::to_string(&show_recoverable(form, draft_path.as_deref()))
+        serde_json::to_string(&show_recoverable(
+            form,
+            draft_path.as_deref(),
+            supports_insert,
+        ))
     } else {
         serde_json::to_string(&show(form))
     }

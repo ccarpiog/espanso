@@ -223,7 +223,7 @@ FormFrame::FormFrame(const wxString &title, const wxPoint &pos,
     }
 
     auto actions = new wxBoxSizer(wxHORIZONTAL);
-    if (recoveryMetadata->enabled) {
+    if (recoveryMetadata->enabled && recoveryMetadata->supportsInsert) {
         auto insert = new wxButton(panel, ID_Insert, "Insert");
         actions->Add(insert, 1, wxALL, PADDING);
         Bind(wxEVT_BUTTON, &FormFrame::OnInsertBtn, this, ID_Insert);

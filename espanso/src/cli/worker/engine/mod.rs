@@ -77,6 +77,8 @@ pub mod form_recovery;
 pub mod funnel;
 mod keyboard_layout_util;
 pub mod process;
+#[cfg(test)]
+mod recovery_pipeline_tests;
 
 #[allow(clippy::too_many_arguments)]
 pub fn initialize_and_spawn(
@@ -185,7 +187,8 @@ pub fn initialize_and_spawn(
                 >,
             > = vec![&rolling_matcher, &regex_matcher];
             let selector = MatchSelectorAdapter::new(&modulo_search_ui, &combined_match_cache);
-            let multiplexer = MultiplexAdapter::new(&combined_match_cache, &*context);
+            let multiplexer =
+                MultiplexAdapter::new(&combined_match_cache, &*context, &form_recovery);
 
             let injector = espanso_inject::get_injector(InjectorCreationOptions {
                 use_evdev: use_evdev_backend,
@@ -315,6 +318,7 @@ pub fn initialize_and_spawn(
             let mut recovery_processor = form_recovery::RecoveryProcessor {
                 inner: &mut processor,
                 recovery: &form_recovery,
+                destination: &form_recovery,
                 clipboard: &*clipboard,
                 params: &config_manager,
                 sequence: &sequencer,

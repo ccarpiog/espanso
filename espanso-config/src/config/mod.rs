@@ -137,6 +137,7 @@ pub trait Config: Send + Sync {
     fn search_shortcut(&self) -> Option<String>;
 
     // Hotkey used to reopen the last form; None disables the shortcut.
+    // Defaults to Ctrl+Alt+Shift+R on macOS, disabled on other platforms.
     fn form_reopen_shortcut(&self) -> Option<String>;
 
     // When enabled, espanso automatically "reverts" an expansion if the user

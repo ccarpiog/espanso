@@ -17,7 +17,10 @@
  * along with espanso.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+};
 
 use crate::{
     CasingStyle, Context, Extension, ExtensionOutput, ExtensionResult, RenderOptions, RenderResult,
@@ -60,27 +63,7 @@ impl Renderer for DefaultRenderer<'_> {
     ) -> RenderResult {
         let body = if VAR_REGEX.is_match(&template.body) {
             // Convert "global" variable type aliases when needed
-            let local_variables: Vec<&Variable> =
-                if template.vars.iter().any(|var| var.var_type == "global") {
-                    let global_vars: HashMap<&str, &Variable> = context
-                        .global_vars
-                        .iter()
-                        .map(|var| (&*var.name, *var))
-                        .collect();
-                    template
-                        .vars
-                        .iter()
-                        .filter_map(|var| {
-                            if var.var_type == "global" {
-                                global_vars.get(&*var.name).copied()
-                            } else {
-                                Some(var)
-                            }
-                        })
-                        .collect()
-                } else {
-                    template.vars.iter().collect()
-                };
+            let local_variables = local_variables(template, context);
 
             // Here we execute a graph dependency resolution algorithm to determine a valid
             // evaluation order for variables.
@@ -208,6 +191,76 @@ impl Renderer for DefaultRenderer<'_> {
     }
 }
 
+fn local_variables<'a>(template: &'a Template, context: &Context<'a>) -> Vec<&'a Variable> {
+    if template.vars.iter().any(|var| var.var_type == "global") {
+        let globals: HashMap<&str, &Variable> = context
+            .global_vars
+            .iter()
+            .map(|var| (var.name.as_str(), *var))
+            .collect();
+        template
+            .vars
+            .iter()
+            .filter_map(|var| {
+                if var.var_type == "global" {
+                    globals.get(var.name.as_str()).copied()
+                } else {
+                    Some(var)
+                }
+            })
+            .collect()
+    } else {
+        template.vars.iter().collect()
+    }
+}
+
+/// Follow the same variable graph as rendering without evaluating extensions.
+/// Capture must happen before any earlier shell/script extension can move focus,
+/// while ordinary noninteractive expansions should not query Accessibility.
+pub fn may_open_ui(template: &Template, context: &Context) -> bool {
+    fn visit(
+        template: &Template,
+        context: &Context,
+        visiting: &mut HashSet<*const Template>,
+    ) -> bool {
+        if !VAR_REGEX.is_match(&template.body) {
+            return false;
+        }
+        if !visiting.insert(std::ptr::from_ref(template)) {
+            // Recursive match cycles cannot be safely evaluated statically.
+            return true;
+        }
+        let locals = local_variables(template, context);
+        let interactive =
+            resolve::resolve_evaluation_order(&template.body, &locals, &context.global_vars)
+                .is_ok_and(|variables| {
+                    variables.iter().any(|variable| {
+                        match variable.var_type.as_str() {
+                            "form" | "choice" => true,
+                            "match" => {
+                                if let Some(nested) =
+                                    get_matching_template(variable, &context.templates)
+                                {
+                                    visit(nested, context, visiting)
+                                } else {
+                                    // The renderer currently matches literal trigger parameters.
+                                    // Conservatively include dynamic targets so future parameter
+                                    // injection cannot make focus capture happen after scripts.
+                                    variable.inject_vars
+                                        && matches!(variable.params.get("trigger"),
+                                Some(Value::String(trigger)) if VAR_REGEX.is_match(trigger))
+                                }
+                            }
+                            _ => false,
+                        }
+                    })
+                });
+        visiting.remove(&std::ptr::from_ref(template));
+        interactive
+    }
+    visit(template, context, &mut HashSet::new())
+}
+
 fn get_matching_template<'a>(
     variable: &Variable,
     templates: &'a [&Template],
@@ -240,6 +293,162 @@ fn log_new_form_syntax_tip() {
     error!("    form: |");
     error!("      Hi [[name]]!");
     error!("");
+}
+
+#[cfg(test)]
+mod ui_analysis_tests {
+    use super::*;
+
+    fn variable(name: &str, kind: &str) -> Variable {
+        Variable {
+            name: name.into(),
+            var_type: kind.into(),
+            ..Default::default()
+        }
+    }
+
+    fn template(body: &str, vars: Vec<Variable>) -> Template {
+        Template {
+            body: body.into(),
+            vars,
+            ..Default::default()
+        }
+    }
+
+    fn nested(name: &str, trigger: &str) -> Variable {
+        Variable {
+            params: HashMap::from([("trigger".into(), Value::String(trigger.into()))]),
+            ..variable(name, "match")
+        }
+    }
+
+    #[test]
+    fn ordinary_expansions_ignore_unrelated_forms() {
+        let form = variable("form", "form");
+        let unrelated = template("{{form}}", vec![form.clone()]);
+        let context = Context {
+            global_vars: vec![&form],
+            templates: vec![&unrelated],
+        };
+        assert!(!may_open_ui(
+            &template("literal", vec![form.clone()]),
+            &context
+        ));
+        assert!(!may_open_ui(
+            &template("{{date}}", vec![variable("date", "date")]),
+            &context
+        ));
+        assert!(may_open_ui(&unrelated, &context));
+    }
+
+    #[test]
+    fn follows_used_globals_aliases_and_dependency_parameters() {
+        let form = variable("form", "form");
+        let context = Context {
+            global_vars: vec![&form],
+            ..Default::default()
+        };
+        assert!(may_open_ui(&template("{{form.name}}", vec![]), &context));
+        assert!(may_open_ui(
+            &template(
+                "{{echo}}",
+                vec![variable("form", "global"), variable("echo", "echo")]
+            ),
+            &context
+        ));
+        let mut echo = variable("echo", "echo");
+        echo.params.insert(
+            "echo".into(),
+            Value::Object(HashMap::from([(
+                "nested".into(),
+                Value::Array(vec![Value::String("{{form.name}}".into())]),
+            )])),
+        );
+        assert!(may_open_ui(
+            &template("{{echo}}", vec![echo.clone()]),
+            &context
+        ));
+        echo.inject_vars = false;
+        assert!(!may_open_ui(
+            &template("{{echo}}", vec![echo.clone()]),
+            &context
+        ));
+        echo.depends_on.push("form".into());
+        assert!(may_open_ui(&template("{{echo}}", vec![echo]), &context));
+    }
+
+    #[test]
+    fn local_shadowing_and_invalid_dependencies_do_not_capture() {
+        let form = variable("value", "form");
+        let context = Context {
+            global_vars: vec![&form],
+            ..Default::default()
+        };
+        assert!(!may_open_ui(
+            &template("{{value}}", vec![variable("value", "date")]),
+            &context
+        ));
+        let mut invalid = variable("form", "form");
+        invalid.depends_on.push("missing".into());
+        assert!(!may_open_ui(
+            &template("{{form}}", vec![invalid.clone()]),
+            &context
+        ));
+        invalid.depends_on = vec!["form".into()];
+        assert!(!may_open_ui(&template("{{form}}", vec![invalid]), &context));
+    }
+
+    #[test]
+    fn nested_matches_follow_only_reachable_templates() {
+        let mut form = template("{{form}}", vec![variable("form", "form")]);
+        form.ids = vec![":form".into()];
+        let mut plain = template("plain", vec![]);
+        plain.ids = vec![":plain".into()];
+        let mut middle = template("{{nested}}", vec![nested("nested", ":form")]);
+        middle.ids = vec![":middle".into()];
+        let context = Context {
+            templates: vec![&form, &plain, &middle],
+            ..Default::default()
+        };
+        assert!(may_open_ui(
+            &template("{{nested}}", vec![nested("nested", ":middle")]),
+            &context
+        ));
+        assert!(!may_open_ui(
+            &template("{{nested}}", vec![nested("nested", ":plain")]),
+            &context
+        ));
+        assert!(!may_open_ui(
+            &template("{{nested}}", vec![nested("nested", ":absent")]),
+            &context
+        ));
+        // A possible dynamically chosen target is conservative, provided its
+        // variable dependencies can actually resolve.
+        assert!(may_open_ui(
+            &template(
+                "{{nested}}",
+                vec![variable("which", "echo"), nested("nested", "{{which}}")]
+            ),
+            &context
+        ));
+    }
+
+    #[test]
+    fn choice_and_recursive_match_cycles_are_interactive() {
+        assert!(may_open_ui(
+            &template("{{choice}}", vec![variable("choice", "choice")]),
+            &Context::default()
+        ));
+        let mut cycle = template("{{nested}}", vec![nested("nested", ":cycle")]);
+        cycle.ids = vec![":cycle".into()];
+        assert!(may_open_ui(
+            &cycle,
+            &Context {
+                templates: vec![&cycle],
+                ..Default::default()
+            }
+        ));
+    }
 }
 
 #[derive(Error, Debug)]
