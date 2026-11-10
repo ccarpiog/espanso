@@ -73,9 +73,12 @@ use super::secure_input::SecureInputEvent;
 
 mod caches;
 pub mod dispatch;
+pub mod form_recovery;
 pub mod funnel;
 mod keyboard_layout_util;
 pub mod process;
+#[cfg(test)]
+mod recovery_pipeline_tests;
 
 #[allow(clippy::too_many_arguments)]
 pub fn initialize_and_spawn(
@@ -113,10 +116,17 @@ pub fn initialize_and_spawn(
             let default_config = &*config_manager.default();
 
             let modulo_manager = crate::gui::modulo::manager::ModuloManager::new();
-            let modulo_form_ui =
-                crate::gui::modulo::form::ModuloFormUI::new(&modulo_manager, &config_manager);
-            let modulo_search_ui =
-                crate::gui::modulo::search::ModuloSearchUI::new(&modulo_manager, &config_manager);
+            let form_recovery = crate::gui::recovery::FormRecovery::new(&paths.runtime);
+            let modulo_form_ui = crate::gui::modulo::form::ModuloFormUI::new(
+                &modulo_manager,
+                &config_manager,
+                &form_recovery,
+            );
+            let modulo_search_ui = crate::gui::modulo::search::ModuloSearchUI::new(
+                &modulo_manager,
+                &config_manager,
+                &form_recovery,
+            );
             let modulo_text_ui = crate::gui::modulo::textview::ModuloTextUI::new(&modulo_manager);
 
             let context: Box<dyn Context> = Box::new(super::context::DefaultContext::new(
@@ -177,7 +187,8 @@ pub fn initialize_and_spawn(
                 >,
             > = vec![&rolling_matcher, &regex_matcher];
             let selector = MatchSelectorAdapter::new(&modulo_search_ui, &combined_match_cache);
-            let multiplexer = MultiplexAdapter::new(&combined_match_cache, &*context);
+            let multiplexer =
+                MultiplexAdapter::new(&combined_match_cache, &*context, &form_recovery);
 
             let injector = espanso_inject::get_injector(InjectorCreationOptions {
                 use_evdev: use_evdev_backend,
@@ -223,7 +234,8 @@ pub fn initialize_and_spawn(
                 &form_extension,
                 &choice_extension,
             ]);
-            let renderer_adapter = RendererAdapter::new(&match_cache, &config_manager, &renderer);
+            let renderer_adapter =
+                RendererAdapter::new(&match_cache, &config_manager, &renderer, &form_recovery);
             let path_provider = PathProviderAdapter::new(&paths);
             let config_path_provider = ConfigPathProviderAdapter::new(&paths);
 
@@ -303,7 +315,18 @@ pub fn initialize_and_spawn(
                 }
             }
 
-            let mut engine = espanso_engine::Engine::new(&funnel, &mut processor, &dispatcher);
+            let mut recovery_processor = form_recovery::RecoveryProcessor {
+                inner: &mut processor,
+                recovery: &form_recovery,
+                destination: &form_recovery,
+                clipboard: &*clipboard,
+                params: &config_manager,
+                sequence: &sequencer,
+                matches: &match_cache,
+                ui: &*ui_remote,
+            };
+            let mut engine =
+                espanso_engine::Engine::new(&funnel, &mut recovery_processor, &dispatcher);
             let exit_mode = engine.run();
             if let Some(mut handle) = welcome_handle {
                 handle.wait().expect("welcome screen died");

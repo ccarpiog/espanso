@@ -32,22 +32,26 @@ pub trait ModuloSearchUIOptionProvider {
 pub struct ModuloSearchUI<'a> {
     manager: &'a ModuloManager,
     option_provider: &'a dyn ModuloSearchUIOptionProvider,
+    recovery: &'a crate::gui::recovery::FormRecovery,
 }
 
 impl<'a> ModuloSearchUI<'a> {
     pub fn new(
         manager: &'a ModuloManager,
         option_provider: &'a dyn ModuloSearchUIOptionProvider,
+        recovery: &'a crate::gui::recovery::FormRecovery,
     ) -> Self {
         Self {
             manager,
             option_provider,
+            recovery,
         }
     }
 }
 
 impl SearchUI for ModuloSearchUI<'_> {
     fn show(&self, items: &[SearchItem], hint: Option<&str>) -> anyhow::Result<Option<String>> {
+        self.recovery.capture_target();
         let modulo_config = ModuloSearchConfig {
             title: "espanso",
             hint,

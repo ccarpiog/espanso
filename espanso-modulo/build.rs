@@ -505,5 +505,7 @@ fn build_native() {
 }
 
 fn main() {
+    println!("cargo:rerun-if-changed=src/sys");
+    println!("cargo:rerun-if-changed=vendor");
     build_native();
 }

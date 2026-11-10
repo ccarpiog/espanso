@@ -48,6 +48,7 @@ generate_patchable_config!(
   backspace_limit -> usize,
   apply_patch -> bool,
   undo_backspace -> bool,
+  form_reopen_shortcut -> Option<String>,
   post_form_delay -> usize,
   max_form_width -> usize,
   max_form_height -> usize,

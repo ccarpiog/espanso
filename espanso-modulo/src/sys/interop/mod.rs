@@ -189,6 +189,17 @@ pub struct ErrorMetadata {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct FormRecoveryMetadata {
+    pub enabled: c_int,
+    pub supportsInsert: c_int,
+    pub hasDraft: c_int,
+    pub savedValues: *const ValuePair,
+    pub savedValueSize: c_int,
+    pub draftError: *const c_char,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct TextViewMetadata {
     pub window_icon_path: *const c_char,
     pub title: *const c_char,
@@ -203,7 +214,14 @@ extern "C" {
     // FORM
     pub(crate) fn interop_show_form(
         metadata: *const FormMetadata,
-        callback: extern "C" fn(values: *const ValuePair, size: c_int, map: *mut c_void),
+        recovery: *const FormRecoveryMetadata,
+        callback: extern "C" fn(
+            values: *const ValuePair,
+            size: c_int,
+            action: c_int,
+            map: *mut c_void,
+        ),
+        save_draft: extern "C" fn(values: *const ValuePair, size: c_int, map: *mut c_void) -> c_int,
         map: *mut c_void,
     );
 

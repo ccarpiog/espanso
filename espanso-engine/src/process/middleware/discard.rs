@@ -51,6 +51,15 @@ impl Middleware for EventsDiscardMiddleware {
         let mut min_id_threshold = self.min_id_threshold.borrow_mut();
         let mut max_id_threshold = self.max_id_threshold.borrow_mut();
 
+        // This control event can carry the original trigger's source ID, which
+        // may already be inside a discarded range. Always propagate it so the
+        // matcher and undo middleware can clear their stale state as well.
+        if let EventType::FormInteractionEnded(m_event) = &event.etype {
+            *min_id_threshold = 0;
+            *max_id_threshold = (*max_id_threshold).max(m_event.minimum_source_id);
+            return event;
+        }
+
         // Filter out previous events
         if event.source_id < *max_id_threshold && event.source_id >= *min_id_threshold {
             trace!("discarding previous event: {event:?}");

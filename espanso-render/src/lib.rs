@@ -36,6 +36,12 @@ pub fn create(extensions: Vec<&dyn Extension>) -> impl Renderer + '_ {
     renderer::DefaultRenderer::new(extensions)
 }
 
+/// Whether rendering may evaluate a form or choice extension. Unused global
+/// variables and unrelated templates do not make an expansion interactive.
+pub fn may_open_ui(template: &Template, context: &Context) -> bool {
+    renderer::may_open_ui(template, context)
+}
+
 #[derive(Debug)]
 pub enum RenderResult {
     Success(String),
