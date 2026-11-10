@@ -40,6 +40,7 @@ pub struct ParsedConfig {
     pub apply_patch: Option<bool>,
     pub search_trigger: Option<String>,
     pub search_shortcut: Option<String>,
+    pub form_reopen_shortcut: Option<String>,
     pub undo_backspace: Option<bool>,
     pub show_notifications: Option<bool>,
     pub show_icon: Option<bool>,

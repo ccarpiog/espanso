@@ -136,6 +136,9 @@ pub trait Config: Send + Sync {
     // Hotkey used to trigger the Search UI
     fn search_shortcut(&self) -> Option<String>;
 
+    // Hotkey used to reopen the last form; None disables the shortcut.
+    fn form_reopen_shortcut(&self) -> Option<String>;
+
     // When enabled, espanso automatically "reverts" an expansion if the user
     // presses the Backspace key afterwards.
     fn undo_backspace(&self) -> bool;
@@ -236,6 +239,7 @@ pub trait Config: Send + Sync {
         backspace_limit: {}
         search_trigger: {:?}
         search_shortcut: {:?}
+        form_reopen_shortcut: {:?}
         keyboard_layout: {:?}
 
         show_icon: {:?}
@@ -275,6 +279,7 @@ pub trait Config: Send + Sync {
           self.backspace_limit(),
           self.search_trigger(),
           self.search_shortcut(),
+          self.form_reopen_shortcut(),
           self.keyboard_layout(),
 
           self.show_icon(),

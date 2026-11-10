@@ -101,6 +101,9 @@ pub struct YAMLConfig {
     pub search_shortcut: Option<String>,
 
     #[serde(default)]
+    pub form_reopen_shortcut: Option<String>,
+
+    #[serde(default)]
     pub undo_backspace: Option<bool>,
 
     #[serde(default)]
@@ -226,6 +229,7 @@ impl TryFrom<YAMLConfig> for ParsedConfig {
             }),
             search_trigger: yaml_config.search_trigger,
             search_shortcut: yaml_config.search_shortcut,
+            form_reopen_shortcut: yaml_config.form_reopen_shortcut,
             undo_backspace: yaml_config.undo_backspace,
 
             show_icon: yaml_config.show_icon,
@@ -316,6 +320,7 @@ mod tests {
       options: test_options
     search_trigger: "search"
     search_shortcut: "CTRL+SPACE"
+    form_reopen_shortcut: "CTRL+SHIFT+F"
     undo_backspace: false
     show_icon: false
     show_notifications: false
@@ -377,6 +382,7 @@ mod tests {
                 keyboard_layout: Some(keyboard_layout),
                 search_trigger: Some("search".to_owned()),
                 search_shortcut: Some("CTRL+SPACE".to_owned()),
+                form_reopen_shortcut: Some("CTRL+SHIFT+F".to_owned()),
                 undo_backspace: Some(false),
                 show_icon: Some(false),
                 show_notifications: Some(false),

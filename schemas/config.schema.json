@@ -91,6 +91,11 @@
       "description": "Hotkey used to show the Search UI.",
       "type": "string"
     },
+    "form_reopen_shortcut": {
+      "description": "Hotkey used to reopen the last form. Set to off to disable the shortcut.",
+      "type": "string",
+      "default": "CTRL+ALT+SHIFT+R"
+    },
     "search_trigger": {
       "description": "Trigger used to show the Search UI.",
       "type": "string"

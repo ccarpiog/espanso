@@ -290,6 +290,14 @@ impl Config for ResolvedConfig {
         }
     }
 
+    fn form_reopen_shortcut(&self) -> Option<String> {
+        match self.parsed.form_reopen_shortcut.as_deref() {
+            Some(shortcut) if shortcut.eq_ignore_ascii_case("off") => None,
+            Some(shortcut) => Some(shortcut.to_owned()),
+            None => Some("CTRL+ALT+SHIFT+R".to_owned()),
+        }
+    }
+
     fn undo_backspace(&self) -> bool {
         self.parsed.undo_backspace.unwrap_or(true)
     }
@@ -441,6 +449,7 @@ impl ResolvedConfig {
             keyboard_layout,
             search_trigger,
             search_shortcut,
+            form_reopen_shortcut,
             undo_backspace,
             show_icon,
             show_notifications,
@@ -536,6 +545,48 @@ mod tests {
     use super::*;
     use crate::util::tests::use_test_directory;
     use std::fs::create_dir_all;
+
+    #[test]
+    fn form_reopen_shortcut_defaults_customizes_and_disables() {
+        use_test_directory(|_, _, config_dir| {
+            let path = config_dir.join("default.yml");
+            for (yaml, expected) in [
+                ("", Some("CTRL+ALT+SHIFT+R")),
+                ("form_reopen_shortcut: CTRL+SHIFT+F", Some("CTRL+SHIFT+F")),
+                ("form_reopen_shortcut: off", None),
+                ("form_reopen_shortcut: OFF", None),
+                ("form_reopen_shortcut: Off", None),
+            ] {
+                std::fs::write(&path, yaml).unwrap();
+                let config = ResolvedConfig::load(&path, None).unwrap();
+                assert_eq!(config.form_reopen_shortcut().as_deref(), expected, "{yaml}");
+            }
+        });
+    }
+
+    #[test]
+    fn form_reopen_shortcut_inherits_but_explicit_off_wins() {
+        let parent = ParsedConfig {
+            form_reopen_shortcut: Some("CTRL+SHIFT+F".into()),
+            ..Default::default()
+        };
+        let mut child = ParsedConfig::default();
+        ResolvedConfig::merge_parsed(&mut child, &parent);
+        assert_eq!(child.form_reopen_shortcut.as_deref(), Some("CTRL+SHIFT+F"));
+        let mut child = ParsedConfig {
+            form_reopen_shortcut: Some("off".into()),
+            ..Default::default()
+        };
+        ResolvedConfig::merge_parsed(&mut child, &parent);
+        assert_eq!(
+            ResolvedConfig {
+                parsed: child,
+                ..Default::default()
+            }
+            .form_reopen_shortcut(),
+            None
+        );
+    }
 
     #[test]
     fn aggregate_includes_empty_config() {

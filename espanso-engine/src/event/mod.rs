@@ -103,6 +103,8 @@ pub enum EventType {
     DisplaySecureInputTroubleshoot,
     ShowConfigFolder,
     ShowSearchBar,
+    ReopenLastForm,
+    CopyLastFormResult,
     ShowText(ui::ShowTextEvent),
     ShowLogs,
 

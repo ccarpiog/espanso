@@ -60,6 +60,19 @@ pub fn get_builtin_matches(config: &dyn Config) -> Vec<BuiltInMatch> {
         debug::create_match_show_logs(),
         process::create_match_exit(),
         process::create_match_restart(),
+        BuiltInMatch {
+            id: generate_next_builtin_id(),
+            label: "Reopen last form",
+            hotkey: config.form_reopen_shortcut(),
+            action: |_| EventType::ReopenLastForm,
+            ..Default::default()
+        },
+        BuiltInMatch {
+            id: generate_next_builtin_id(),
+            label: "Copy last form result",
+            action: |_| EventType::CopyLastFormResult,
+            ..Default::default()
+        },
     ];
 
     if config.search_trigger().is_some() || config.search_shortcut().is_some() {
