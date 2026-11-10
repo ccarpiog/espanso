@@ -368,39 +368,169 @@ mod interop {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FormAction {
+    Cancel,
+    Copy,
+    Insert,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct FormResult {
+    pub action: FormAction,
+    pub values: HashMap<String, String>,
+}
+
 pub fn show(form: types::Form) -> HashMap<String, String> {
-    use super::interop::{interop_show_form, FormMetadata, Interoperable, ValuePair};
-    use std::os::raw::c_void;
+    let result = show_inner(form, None, false);
+    if result.action == FormAction::Cancel {
+        HashMap::new()
+    } else {
+        result.values
+    }
+}
+
+pub fn show_recoverable(form: types::Form, draft_path: Option<&std::path::Path>) -> FormResult {
+    show_inner(form, draft_path, true)
+}
+
+fn show_inner(
+    form: types::Form,
+    draft_path: Option<&std::path::Path>,
+    recovery_mode: bool,
+) -> FormResult {
+    use super::interop::{
+        interop_show_form, FormMetadata, FormRecoveryMetadata, Interoperable, ValuePair,
+    };
+    use crate::form::draft::{self, Draft};
+    use std::{ffi::CString, os::raw::c_void, path::Path};
 
     let owned_form: interop::OwnedForm = form.into();
     let metadata: *const FormMetadata = owned_form.as_ptr() as *const FormMetadata;
+    let (saved, error) = if recovery_mode {
+        match draft_path.map(draft::load).transpose() {
+            Ok(saved) => (saved.flatten(), String::new()),
+            Err(error) => (None, format!("Could not load saved entries: {error}")),
+        }
+    } else {
+        (None, String::new())
+    };
+    let error = CString::new(error.replace('\0', "")).unwrap();
+    let saved_strings: Vec<(CString, Option<CString>)> = saved
+        .as_ref()
+        .map(|draft| {
+            draft
+                .fields
+                .iter()
+                .flat_map(|(id, values)| {
+                    let values: Vec<Option<&str>> = if values.is_empty() {
+                        vec![None]
+                    } else {
+                        values.iter().map(|v| Some(v.as_str())).collect()
+                    };
+                    values.into_iter().map(move |value| {
+                        (
+                            CString::new(id.as_str()).unwrap(),
+                            value.map(|value| CString::new(value).unwrap()),
+                        )
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let saved_values: Vec<ValuePair> = saved_strings
+        .iter()
+        .map(|(id, value)| ValuePair {
+            id: id.as_ptr(),
+            value: value
+                .as_ref()
+                .map_or(std::ptr::null(), |value| value.as_ptr()),
+        })
+        .collect();
+    let recovery = FormRecoveryMetadata {
+        enabled: i32::from(recovery_mode),
+        hasDraft: i32::from(saved.is_some()),
+        savedValues: saved_values.as_ptr(),
+        savedValueSize: saved_values.len() as c_int,
+        draftError: error.as_ptr(),
+    };
+    struct State<'a> {
+        result: FormResult,
+        path: Option<&'a Path>,
+    }
+    let mut state = State {
+        result: FormResult {
+            action: FormAction::Cancel,
+            values: HashMap::new(),
+        },
+        path: draft_path,
+    };
 
-    let mut value_map: HashMap<String, String> = HashMap::new();
-
-    extern "C" fn callback(values: *const ValuePair, size: c_int, map: *mut c_void) {
-        let values: &[ValuePair] = unsafe { std::slice::from_raw_parts(values, size as usize) };
-        let map = map as *mut HashMap<String, String>;
-        let map = unsafe { &mut (*map) };
+    extern "C" fn callback(
+        values: *const ValuePair,
+        size: c_int,
+        action: c_int,
+        data: *mut c_void,
+    ) {
+        let state = unsafe { &mut *data.cast::<State<'_>>() };
+        state.result.action = match action {
+            1 => FormAction::Copy,
+            2 => FormAction::Insert,
+            _ => FormAction::Cancel,
+        };
+        if size <= 0 {
+            return;
+        }
+        let values = unsafe { std::slice::from_raw_parts(values, size as usize) };
         for pair in values {
-            unsafe {
-                let id = CStr::from_ptr(pair.id);
-                let value = CStr::from_ptr(pair.value);
-
-                let id = id.to_string_lossy().to_string();
-                let value = value.to_string_lossy().to_string();
-                map.insert(id, value);
-            }
+            let id = unsafe { CStr::from_ptr(pair.id) }
+                .to_string_lossy()
+                .into_owned();
+            let value = unsafe { CStr::from_ptr(pair.value) }
+                .to_string_lossy()
+                .into_owned();
+            state.result.values.insert(id, value);
         }
     }
 
-    unsafe {
-        // TODO: Nested rows should fail, add check
-        interop_show_form(
-            metadata,
-            callback,
-            std::ptr::from_mut::<HashMap<String, String>>(&mut value_map) as *mut c_void,
-        );
+    extern "C" fn save_draft(values: *const ValuePair, size: c_int, data: *mut c_void) -> c_int {
+        // Never unwind across the native callback boundary.
+        let result = std::panic::catch_unwind(|| -> anyhow::Result<()> {
+            let state = unsafe { &*data.cast::<State<'_>>() };
+            let path = state
+                .path
+                .ok_or_else(|| anyhow::anyhow!("Draft recovery is unavailable"))?;
+            let mut draft = Draft::default();
+            if size > 0 {
+                let values = unsafe { std::slice::from_raw_parts(values, size as usize) };
+                for pair in values {
+                    let id = unsafe { CStr::from_ptr(pair.id) }
+                        .to_string_lossy()
+                        .into_owned();
+                    let entry = draft.fields.entry(id).or_default();
+                    if !pair.value.is_null() {
+                        entry.push(
+                            unsafe { CStr::from_ptr(pair.value) }
+                                .to_string_lossy()
+                                .into_owned(),
+                        );
+                    }
+                }
+            }
+            draft::save(path, &draft)
+        });
+        i32::from(matches!(result, Ok(Ok(()))))
     }
 
-    value_map
+    unsafe {
+        interop_show_form(
+            metadata,
+            &recovery,
+            callback,
+            save_draft,
+            std::ptr::from_mut(&mut state).cast(),
+        );
+    }
+    state.result
 }

@@ -22,6 +22,7 @@ use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::convert::TryInto;
 
+use crate::gui::recovery::{FormAction, FormRecovery, FormResponse};
 use crate::gui::{FormField, FormUI};
 
 use super::manager::ModuloManager;
@@ -35,16 +36,19 @@ pub trait ModuloFormUIOptionProvider {
 pub struct ModuloFormUI<'a> {
     manager: &'a ModuloManager,
     option_provider: &'a dyn ModuloFormUIOptionProvider,
+    recovery: &'a FormRecovery,
 }
 
 impl<'a> ModuloFormUI<'a> {
     pub fn new(
         manager: &'a ModuloManager,
         option_provider: &'a dyn ModuloFormUIOptionProvider,
+        recovery: &'a FormRecovery,
     ) -> Self {
         Self {
             manager,
             option_provider,
+            recovery,
         }
     }
 }
@@ -55,10 +59,21 @@ impl FormUI for ModuloFormUI<'_> {
         layout: &str,
         fields: &HashMap<String, FormField>,
     ) -> anyhow::Result<Option<HashMap<String, String>>> {
+        let fields = convert_fields_into_object(fields);
+        let mut schema_fields = fields.clone();
+        for field in schema_fields.values_mut() {
+            if let Some(field) = field.as_object_mut() {
+                field.remove("default");
+            }
+        }
+        let schema = serde_json::to_string(&(layout, &schema_fields))?;
+        let draft_path = self.recovery.open_form(&schema)?;
         let modulo_form_config = ModuloFormConfig {
             title: "espanso",
             layout,
-            fields: convert_fields_into_object(fields),
+            fields,
+            recovery_mode: true,
+            draft_path,
             max_form_width: self.option_provider.get_max_form_width(),
             max_form_height: self.option_provider.get_max_form_height(),
         };
@@ -67,13 +82,14 @@ impl FormUI for ModuloFormUI<'_> {
         let output = self
             .manager
             .invoke(&["form", "-j", "-i", "-"], &json_config)?;
-        let json: Result<HashMap<String, String>, _> = serde_json::from_str(&output);
+        let json: Result<FormResponse, _> = serde_json::from_str(&output);
         let result = match json {
             Ok(json) => {
-                if json.is_empty() {
+                self.recovery.select(json.action);
+                if json.action == FormAction::Cancel {
                     Ok(None)
                 } else {
-                    Ok(Some(json))
+                    Ok(Some(json.values))
                 }
             }
             Err(error) => Err(error.into()),
@@ -92,6 +108,8 @@ impl FormUI for ModuloFormUI<'_> {
 
 #[derive(Debug, Serialize)]
 struct ModuloFormConfig<'a> {
+    recovery_mode: bool,
+    draft_path: std::path::PathBuf,
     title: &'a str,
     layout: &'a str,
     fields: Map<String, Value>,

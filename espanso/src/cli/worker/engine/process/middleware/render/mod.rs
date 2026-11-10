@@ -27,6 +27,7 @@ use espanso_config::{
 };
 use espanso_render::{CasingStyle, Context, RenderOptions, Template, Value, Variable};
 
+use crate::gui::recovery::{fingerprint, FormRecovery, LastForm};
 use espanso_engine::process::{Renderer, RendererError};
 
 pub trait MatchProvider<'a> {
@@ -40,6 +41,7 @@ pub trait ConfigProvider<'a> {
 }
 
 pub struct RendererAdapter<'a> {
+    recovery: &'a FormRecovery,
     renderer: &'a dyn espanso_render::Renderer,
     match_provider: &'a dyn MatchProvider<'a>,
     config_provider: &'a dyn ConfigProvider<'a>,
@@ -55,11 +57,13 @@ impl<'a> RendererAdapter<'a> {
         match_provider: &'a dyn MatchProvider<'a>,
         config_provider: &'a dyn ConfigProvider<'a>,
         renderer: &'a dyn espanso_render::Renderer,
+        recovery: &'a FormRecovery,
     ) -> Self {
         let template_map = generate_template_map(match_provider);
         let global_vars_map = generate_global_vars_map(config_provider);
 
         Self {
+            recovery,
             renderer,
             config_provider,
             match_provider,
@@ -184,14 +188,49 @@ fn convert_value(value: espanso_config::matches::Value) -> espanso_render::Value
 }
 
 impl<'a> Renderer<'a> for RendererAdapter<'a> {
+    fn retain_interactive_result(
+        &self,
+        body: &str,
+        format: &espanso_engine::event::internal::TextFormat,
+    ) -> anyhow::Result<bool> {
+        if !self.recovery.used() {
+            return Ok(false);
+        }
+        let (result, cursor_moves) =
+            crate::cli::worker::engine::form_recovery::prepare_result(body, format);
+        self.recovery.finish(result, cursor_moves)?;
+        Ok(true)
+    }
+
     fn render(
         &'a self,
         match_id: i32,
         trigger: Option<&str>,
         trigger_vars: HashMap<String, String>,
     ) -> anyhow::Result<String> {
+        self.recovery.capture_target();
         if let Some(Some(template)) = self.template_map.get(&match_id) {
-            let (config, match_set) = self.config_provider.active();
+            let (config, match_set) = if let Some(expected) = self.recovery.reopen_context() {
+                self.config_provider
+                    .configs()
+                    .into_iter()
+                    .find(|(config, matches)| context_key(&**config, matches) == expected)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "saved form configuration changed; copy the saved result instead"
+                        )
+                    })?
+            } else {
+                self.config_provider.active()
+            };
+            if let Some(m) = self.match_provider.get(match_id) {
+                self.recovery.prepare(LastForm {
+                    fingerprint: fingerprint(m),
+                    context_key: context_key(&*config, &match_set),
+                    trigger: trigger.map(str::to_owned),
+                    args: trigger_vars.clone(),
+                });
+            }
 
             let mut context_cache = self.context_cache.borrow_mut();
             let context = context_cache.entry(config.id()).or_insert_with(|| {
@@ -251,6 +290,19 @@ impl<'a> Renderer<'a> for RendererAdapter<'a> {
             Err(RendererError::NotFound.into())
         }
     }
+}
+
+fn context_key(config: &dyn Config, match_set: &MatchSet) -> String {
+    let globals: Vec<_> = match_set
+        .global_vars
+        .iter()
+        .map(|var| {
+            let mut var = (*var).clone();
+            var.id = 0;
+            var
+        })
+        .collect();
+    crate::gui::recovery::digest(&format!("v1:{:?}:{globals:?}", config.match_paths()))
 }
 
 fn extract_uppercasing_style(m: &Match) -> Option<UpperCasingStyle> {

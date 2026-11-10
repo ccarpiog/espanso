@@ -22,6 +22,7 @@ use std::{collections::HashMap, path::Path};
 use anyhow::Result;
 
 pub mod modulo;
+pub mod recovery;
 
 pub trait SearchUI {
     fn show(&self, items: &[SearchItem], hint: Option<&str>) -> Result<Option<String>>;

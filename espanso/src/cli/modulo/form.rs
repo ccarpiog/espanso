@@ -50,10 +50,15 @@ pub fn form_main(matches: &ArgMatches, _icon_paths: &IconPaths) -> i32 {
         .as_deref()
         .map(|path| path.to_string_lossy().to_string());
 
+    let recovery_mode = config.recovery_mode;
+    let draft_path = config.draft_path.clone();
     let form = generator::generate(config);
-    let values = show(form);
-
-    let output = serde_json::to_string(&values).expect("unable to encode values as JSON");
+    let output = if recovery_mode {
+        serde_json::to_string(&show_recoverable(form, draft_path.as_deref()))
+    } else {
+        serde_json::to_string(&show(form))
+    }
+    .expect("unable to encode values as JSON");
     println!("{output}");
 
     0

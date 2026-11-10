@@ -58,7 +58,9 @@ extern "C" int32_t mac_utils_focus_restore(const void *target);
 extern "C" int32_t mac_utils_focus_is_current(const void *target);
 extern "C" int32_t mac_utils_focus_is_unchanged_current(const void *target);
 extern "C" const char *mac_utils_focus_app_name(const void *target);
+extern "C" int64_t mac_utils_clipboard_snapshot(const uint8_t *expected_text, size_t text_size);
 extern "C" int32_t mac_utils_focus_paste(const void *target, const uint8_t *expected_deletion,
-                                        size_t deletion_size, size_t cursor_moves, uint32_t delay_ms);
+                                        size_t deletion_size, size_t cursor_moves, uint32_t delay_ms,
+                                        int64_t clipboard_count);
 
 #endif // ESPANSO_MAC_UTILS_H

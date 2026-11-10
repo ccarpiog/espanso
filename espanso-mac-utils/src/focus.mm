@@ -216,8 +216,10 @@ public:
   TargetKey(const TargetKey &) = delete;
   TargetKey &operator=(const TargetKey &) = delete;
   bool valid() const { return down && up; }
-  bool press(const FocusSnapshot *target) {
+  bool press(const FocusSnapshot *target, int64_t clipboard_count = -1) {
     if (!valid() || !target->is_current()) return false;
+    if (clipboard_count >= 0 && [[NSPasteboard generalPasteboard] changeCount] != clipboard_count)
+      return false;
     CGEventPostToPid(pid, down);
     pressed = true;
     return true;
@@ -241,7 +243,26 @@ bool replacement_range(AXValueRef selection, CFStringRef text,
   return CFStringCompareWithOptions(text, deletion, range, 0) == kCFCompareEqualTo;
 }
 
+int64_t verified_clipboard_count(NSPasteboard *pasteboard, NSString *expected_text) {
+  if (!pasteboard || !expected_text) return -1;
+  const auto before = [pasteboard changeCount];
+  NSString *actual_text = [pasteboard stringForType:NSPasteboardTypeString];
+  const bool matches = actual_text && [actual_text isEqualToString:expected_text];
+  const auto after = [pasteboard changeCount];
+  return matches && before >= 0 && before == after ? after : -1;
+}
+
 } // namespace
+
+int64_t mac_utils_clipboard_snapshot(const uint8_t *expected_text, size_t text_size) {
+  @autoreleasepool {
+    if (!expected_text && text_size) return -1;
+    NSString *text = [[NSString alloc] initWithBytes:expected_text length:text_size encoding:NSUTF8StringEncoding];
+    const auto count = verified_clipboard_count([NSPasteboard generalPasteboard], text);
+    [text release];
+    return count;
+  }
+}
 
 void *mac_utils_focus_capture() {
   @autoreleasepool {
@@ -335,9 +356,10 @@ const char *mac_utils_focus_app_name(const void *target) {
 }
 
 int32_t mac_utils_focus_paste(const void *raw_target, const uint8_t *expected_deletion,
-                              size_t deletion_size, size_t cursor_moves, uint32_t delay_ms) {
+                              size_t deletion_size, size_t cursor_moves, uint32_t delay_ms,
+                              int64_t clipboard_count) {
   @autoreleasepool {
-    if (!raw_target || (!expected_deletion && deletion_size) ||
+    if (!raw_target || clipboard_count < 0 || (!expected_deletion && deletion_size) ||
         deletion_size > static_cast<size_t>(std::numeric_limits<CFIndex>::max())) return 0;
     const auto *target = static_cast<const FocusSnapshot *>(raw_target);
     CFStringRef deletion = CFStringCreateWithBytes(kCFAllocatorDefault, expected_deletion,
@@ -346,7 +368,8 @@ int32_t mac_utils_focus_paste(const void *raw_target, const uint8_t *expected_de
     CFRange range;
     const bool valid = replacement_range(target->selection, target->text, deletion, range);
     CFRelease(deletion);
-    if (!valid || !target->is_unchanged_current()) return 0;
+    if (!valid || !target->is_unchanged_current() ||
+        [[NSPasteboard generalPasteboard] changeCount] != clipboard_count) return 0;
     AXValueRef replacement_selection = AXValueCreate(kAXValueTypeCFRange, &range);
     if (!replacement_selection) return 0;
     const auto delay = std::chrono::milliseconds(delay_ms);
@@ -362,14 +385,15 @@ int32_t mac_utils_focus_paste(const void *raw_target, const uint8_t *expected_de
     }
     auto ready_to_paste = [&]() {
       return target->is_current() && target->text_unchanged() &&
-          target->selection_equals(replacement_selection) && target->is_current();
+          target->selection_equals(replacement_selection) && target->is_current() &&
+          [[NSPasteboard generalPasteboard] changeCount] == clipboard_count;
     };
-    if (!prepared || !ready_to_paste() || !command.press(target)) {
+    if (!prepared || !ready_to_paste() || !command.press(target, clipboard_count)) {
       CFRelease(replacement_selection);
       return 0;
     }
     std::this_thread::sleep_for(delay);
-    if (!ready_to_paste() || !paste.press(target)) {
+    if (!ready_to_paste() || !paste.press(target, clipboard_count)) {
       CFRelease(replacement_selection);
       return 0; // TargetKey releases Command even on this failure path.
     }

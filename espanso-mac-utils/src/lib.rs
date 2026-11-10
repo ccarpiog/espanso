@@ -25,7 +25,7 @@ mod ffi;
 #[cfg(target_os = "macos")]
 mod focus;
 #[cfg(target_os = "macos")]
-pub use focus::FocusTarget;
+pub use focus::{ClipboardSnapshot, FocusTarget};
 
 /// Check whether an application is currently holding the Secure Input.
 /// Return None if no application has claimed `SecureInput`, its PID otherwise.

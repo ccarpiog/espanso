@@ -42,6 +42,12 @@ fn default_max_form_height() -> i32 {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FormConfig {
+    #[serde(default)]
+    pub recovery_mode: bool,
+
+    #[serde(default)]
+    pub draft_path: Option<std::path::PathBuf>,
+
     #[serde(default = "default_title")]
     pub title: String,
 
@@ -194,4 +200,28 @@ pub struct AutoFieldConfig {
 
     #[serde(default = "default_separator")]
     pub separator: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn existing_form_configs_keep_legacy_submission() {
+        let config: FormConfig = serde_json::from_str(r#"{"layout":"Name: [[name]]"}"#).unwrap();
+        assert!(!config.recovery_mode);
+        assert!(config.draft_path.is_none());
+    }
+
+    #[test]
+    fn recovery_config_accepts_private_draft_location() {
+        let config: FormConfig = serde_json::from_str(
+            r#"{"layout":"[[name]]","recovery_mode":true,"draft_path":"/private/drafts/example.json"}"#,
+        ).unwrap();
+        assert!(config.recovery_mode);
+        assert_eq!(
+            config.draft_path.unwrap(),
+            std::path::Path::new("/private/drafts/example.json")
+        );
+    }
 }

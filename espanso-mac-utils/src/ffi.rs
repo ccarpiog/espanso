@@ -28,12 +28,14 @@ extern "C" {
     pub fn mac_utils_focus_restore(target: *const std::ffi::c_void) -> i32;
     pub fn mac_utils_focus_is_current(target: *const std::ffi::c_void) -> i32;
     pub fn mac_utils_focus_is_unchanged_current(target: *const std::ffi::c_void) -> i32;
+    pub fn mac_utils_clipboard_snapshot(expected_text: *const u8, text_size: usize) -> i64;
     pub fn mac_utils_focus_paste(
         target: *const std::ffi::c_void,
         expected_deletion: *const u8,
         deletion_size: usize,
         cursor_moves: usize,
         delay_ms: u32,
+        clipboard_count: i64,
     ) -> i32;
     pub fn mac_utils_focus_app_name(target: *const std::ffi::c_void) -> *const c_char;
     pub fn mac_utils_get_secure_input_process(pid: *mut i64) -> i32;

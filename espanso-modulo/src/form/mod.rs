@@ -18,7 +18,8 @@
  */
 
 pub mod config;
+pub mod draft;
 pub mod generator;
 pub mod parser;
 
-pub use crate::sys::form::show;
+pub use crate::sys::form::{show, show_recoverable, FormAction, FormResult};

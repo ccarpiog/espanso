@@ -27,6 +27,14 @@ use anyhow::Result;
 use thiserror::Error;
 
 pub trait Renderer<'a> {
+    /// A renderer can retain an interactive result for a separate delivery step.
+    fn retain_interactive_result(
+        &self,
+        _body: &str,
+        _format: &crate::event::internal::TextFormat,
+    ) -> Result<bool> {
+        Ok(false)
+    }
     fn render(
         &'a self,
         match_id: i32,
@@ -75,6 +83,18 @@ impl Middleware for RenderMiddleware<'_> {
                     } else {
                         body
                     };
+
+                    match self
+                        .renderer
+                        .retain_interactive_result(&body, &m_event.format)
+                    {
+                        Ok(true) => return Event::caused_by(event.source_id, EventType::NOOP),
+                        Ok(false) => {}
+                        Err(err) => {
+                            error!("could not retain interactive result: {err}");
+                            return Event::caused_by(event.source_id, EventType::RenderingError);
+                        }
+                    }
 
                     return Event::caused_by(
                         event.source_id,

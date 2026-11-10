@@ -74,6 +74,14 @@ typedef struct ValuePair {
     const char *value;
 } ValuePair;
 
+typedef struct FormRecoveryMetadata {
+    const int enabled;
+    const int hasDraft;
+    const ValuePair *savedValues;
+    const int savedValueSize;
+    const char *draftError;
+} FormRecoveryMetadata;
+
 // SEARCH
 
 typedef struct SearchItem {

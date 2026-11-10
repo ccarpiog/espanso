@@ -27,6 +27,25 @@ use std::{ffi::CStr, marker::PhantomData, ptr::NonNull, rc::Rc};
 
 use crate::ffi;
 
+/// A verified version of the system clipboard after copying a form result.
+///
+/// Capturing compares the plain-text fallback and brackets the read with the
+/// pasteboard change count. All later flavor changes invalidate the snapshot.
+/// It does not take clipboard ownership or prevent other apps from copying.
+pub struct ClipboardSnapshot {
+    change_count: i64,
+}
+
+impl ClipboardSnapshot {
+    pub fn capture(expected_text: &str) -> Option<Self> {
+        // SAFETY: the byte slice remains valid for the synchronous native read.
+        let change_count = unsafe {
+            ffi::mac_utils_clipboard_snapshot(expected_text.as_ptr(), expected_text.len())
+        };
+        (change_count >= 0).then_some(Self { change_count })
+    }
+}
+
 /// An owned snapshot of the frontmost application's focused text field.
 ///
 /// Capture fails closed when Accessibility cannot identify a window and a
@@ -80,11 +99,13 @@ impl FocusTarget {
     /// Submit a guarded select-trigger / Cmd+V / cursor-left sequence to the
     /// captured process, without deferring it onto the main dispatch queue.
     ///
-    /// The clipboard must already contain the final expansion. The original
+    /// The clipboard must already contain the final expansion, with a verified
+    /// snapshot captured immediately after copying it. Clipboard changes abort
+    /// delivery, including a final check immediately before the paste key. The original
     /// text and selection are verified before the first event; focus identity
     /// is checked before each key press. The exact expected trigger suffix must
     /// precede the captured caret; it is selected using UTF-16 AX offsets, then
-    /// replaced by paste. If expected_deletion is empty, the original selection
+    /// replaced by paste. If `expected_deletion` is empty, the original selection
     /// is preserved. Keys are always released to their original PID, even if
     /// focus changes. A false return may follow a partial sequence: keep a copy
     /// for recovery and never retry automatically. A true return
@@ -94,6 +115,7 @@ impl FocusTarget {
         expected_deletion: &str,
         cursor_moves: usize,
         delay_ms: u32,
+        clipboard: &ClipboardSnapshot,
     ) -> bool {
         // SAFETY: raw is owned, the UTF-8 slice stays borrowed throughout this call, and native event
         // ownership and release stay within the synchronous call.
@@ -104,6 +126,7 @@ impl FocusTarget {
                 expected_deletion.len(),
                 cursor_moves,
                 delay_ms,
+                clipboard.change_count,
             ) != 0
         }
     }
@@ -146,7 +169,7 @@ mod tests {
                 0
             );
             assert_eq!(
-                ffi::mac_utils_focus_paste(std::ptr::null(), std::ptr::null(), 0, 1, 0),
+                ffi::mac_utils_focus_paste(std::ptr::null(), std::ptr::null(), 0, 1, 0, -1),
                 0
             );
             assert!(ffi::mac_utils_focus_app_name(std::ptr::null()).is_null());

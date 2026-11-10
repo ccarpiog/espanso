@@ -99,7 +99,22 @@ int main() {
     assert(!mac_utils_focus_is_unchanged_current(nullptr));
     assert(!mac_utils_focus_restore(nullptr));
     assert(!mac_utils_focus_app_name(nullptr));
-    assert(!mac_utils_focus_paste(nullptr, nullptr, 0, 1, 0));
+    assert(!mac_utils_focus_paste(nullptr, nullptr, 0, 1, 0, -1));
     mac_utils_focus_destroy(nullptr);
+    // A named pasteboard exercises clipboard validation without changing the
+    // user's general clipboard. A mismatch cannot acquire a usable token.
+    NSPasteboard *pasteboard = [NSPasteboard pasteboardWithUniqueName];
+    [pasteboard declareTypes:@[NSPasteboardTypeString] owner:nil];
+    assert([pasteboard setString:@"form result" forType:NSPasteboardTypeString]);
+    int64_t token = verified_clipboard_count(pasteboard, @"form result");
+    assert(token >= 0);
+    assert(verified_clipboard_count(pasteboard, @"different") < 0);
+    [pasteboard clearContents];
+    assert([pasteboard changeCount] != token);
+    assert(verified_clipboard_count(pasteboard, @"form result") < 0);
+    [pasteboard declareTypes:@[NSPasteboardTypeString] owner:nil];
+    assert([pasteboard setString:@"" forType:NSPasteboardTypeString]);
+    assert(verified_clipboard_count(pasteboard, @"") >= 0);
+    [pasteboard releaseGlobally];
   }
 }

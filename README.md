@@ -71,6 +71,54 @@ matches:
   - triggers: [":test1", ":test2"]
     replace: "These both expand to the same thing"
 ```
+## Recoverable forms
+
+Forms save entries locally while you type and retain them after Copy, Insert,
+Escape, or closing the window. Opening the same form restores its entries;
+**Start fresh** resets them to the current defaults. Drafts are separated by
+snippet, configuration context, and form structure. Changing a dynamic default,
+such as a clipboard value, does not hide an existing draft.
+
+**Copy result** is the default completion action. It renders the entire snippet
+and copies the result without deleting the trigger or sending any editing keys.
+Select the destination and paste it manually. The **Copy last form result**
+command in Espanso Search copies the saved output again without rerunning scripts
+or asking for fields. Explicit Copy retains the result regardless of the normal
+`preserve_clipboard` or `backend` settings.
+
+**Insert** is available for supported macOS text controls. Espanso remembers the
+original app, window, field, text, and selection before opening its UI. It restores
+that destination, verifies the exact trigger, and replaces the selected trigger
+with a guarded paste. If the destination or clipboard cannot be verified, the
+result remains recoverable through **Copy last form result**. Other platforms,
+unsupported controls, and custom paste shortcuts use the manual-copy fallback.
+Insertion is best effort: submitted keyboard events cannot prove that an app
+accepted a paste. Espanso retains the result and does not automatically retry.
+Rich text is copied with a plain-text fallback; cursor hints are removed from
+copied text, and cursor repositioning on Insert is supported for plain text only.
+
+Use **Reopen last form** in Search or press **Ctrl+Alt+Shift+R** (Control+Option+
+Shift+R on macOS). The shortcut can be changed or disabled in `config/default.yml`:
+
+```yaml
+form_reopen_shortcut: CTRL+ALT+SHIFT+R
+# form_reopen_shortcut: off
+```
+
+Reopening restores the original configuration's global variables and never
+deletes the old trigger at the new destination. If the snippet or configuration
+has changed, use the saved result or open the revised snippet normally.
+Multiple forms belong to one completion: choosing Copy in any form prevents
+automatic insertion, and cancelling any form cancels insertion for the snippet.
+
+Drafts, the last form reference, and the last rendered result are stored as JSON
+under `form-recovery` in Espanso's runtime directory (`espanso path` shows it).
+They persist across restarts and are not written into synced snippet files. On
+Unix, the directory is private (0700) and files are private (0600), with atomic
+replacement. To clear recovery history, stop Espanso and remove that directory.
+The standalone `espanso modulo form` command retains its legacy JSON output
+unless its input explicitly enables `recovery_mode` with a `draft_path`.
+
 ## Team Members and Contributors
 
 ### Team
